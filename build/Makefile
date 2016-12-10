@@ -42,7 +42,7 @@ install_isolated/lib/rosbeam/.stamp: $(SOURCES) install_isolated/.stamp
 	touch $@
 
 install: install_isolated/lib/rosbeam/.stamp
-	sudo -u '#1000' install -p -m 755 examples/platform.sh -D overlay/home/st/sw-dev/install/scripts/platform.sh
+	sudo -u '#1000' install -p -m 755 examples/paths.sh -D overlay/home/st/sw-dev/install/env/paths.sh
 	install -p -o root -g root -m 755 examples/bridge.sh -D overlay/usr/bin/rosbeam-bridge.sh
 	install -p -o root -g root -m 755 install_isolated/lib/rosbeam/bridge -D overlay/usr/bin/rosbeam-bridge
 	install -p -o root -g root -m 4755 install_isolated/lib/rosbeam/libtexclient-inject.so -D overlay/usr/lib/x86_64-linux-gnu/libtexclient-inject.so
