@@ -2,7 +2,7 @@
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/Twist.h>
 #include <tf2_msgs/TFMessage.h>
-
+#include <tf/transform_broadcaster.h>
 #include <boost/thread.hpp>
 
 #include <sys/mman.h>
@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <errno.h>
+
 
 #include "drive_command.h"
 
@@ -24,13 +25,14 @@ private:
 	ros::NodeHandle node;
 	ros::Publisher pubOdom, pubTf;
 	ros::Subscriber subVel;
-
 	boost::thread odomThread;
 
 	struct drive_shm *shm;
 public:
 	bool start() {
+		
 		int fd = shm_open(DRIVE_SHM_NAME, O_RDWR, 0);
+
 		if (fd < 0) {
 			ROS_ERROR("shm_open: %s", strerror(errno));
 			return false;
@@ -44,11 +46,11 @@ public:
 			ROS_ERROR("mmap: %s", strerror(errno));
 			return false;
 		}
+		
+		subVel = node.subscribe("/cmd_vel", 2, &bridge_node::sub_vel, this);
 
-		subVel = node.subscribe("cmd_vel", 2, &bridge_node::sub_vel, this);
-
-		pubOdom = node.advertise<nav_msgs::Odometry>("odom", 50);
-		pubTf = node.advertise<tf2_msgs::TFMessage>("/tf", 100);
+		pubOdom = node.advertise<nav_msgs::Odometry>("/odom", 50);
+		pubTf = node.advertise<tf2_msgs::TFMessage>("/tf", 50);
 
 		odomThread = boost::thread(&bridge_node::process_odometry, this);
 
@@ -62,9 +64,13 @@ public:
 
 		double x = 0.0;
 		double y = 0.0;
-		double theta = 0.0;
-		double last_lin_enc, last_ang_enc;
-		bool first_enc = true;
+  		double th = 0.0;
+  		double vx;
+  		double vy = 0.0;
+  		double vth;
+		
+		double lastTimeStamp, TimeStamp;
+		bool firstTimeStamp = true; 
 
 		while (ros::ok()) {
 			pthread_mutex_lock(&shm->stat_lock);
@@ -79,56 +85,72 @@ public:
 			stat = shm->stat;
 			pthread_mutex_unlock(&shm->stat_lock);
 
-			ros::Time time = ros::Time::now();
+			ros::Time current_time = ros::Time::now();
 
-			double lin_enc = (stat.encoder_1 - stat.encoder_2) * 0.0040578907f;
-			double ang_enc = (stat.encoder_2 + stat.encoder_1) * -0.019415744f;
-			double lin_vel = stat.actualLinearVelocity / 65536.0;
-			double ang_vel = stat.actualAngularVelocity / 65536.0;
+			TimeStamp = stat.timeStamp;			
+			if(firstTimeStamp){
+				firstTimeStamp = false;
+				lastTimeStamp = TimeStamp;
+				continue;			
+			}	
+	
+			if((stat.actualLinearVelocity < 150 && stat.actualLinearVelocity > -150) || (stat.actualAngularVelocity < 150 && stat.actualAngularVelocity > -150))
+			{
+				stat.actualLinearVelocity = 0;
+				stat.actualAngularVelocity = 0;
+			} 		
 
-			if (first_enc) {
-				first_enc = false;
-				last_lin_enc = lin_enc;
-				last_ang_enc = ang_enc;
-				continue;
-			}
+			vx = stat.actualLinearVelocity / 65536.0;
+			vth = stat.actualAngularVelocity / 65536.0;		
+ 
+			double dt = (TimeStamp - lastTimeStamp)/ 1000000;
+			double delta_x = (vx * cos(th) - vy * sin(th)) * dt;
+    			double delta_y = (vx * sin(th) + vy * cos(th)) * dt;
+    			double delta_th = vth * dt;
+		
+			x += delta_x;
+    			y += delta_y;
+    			th += delta_th;
 
-			double movement = lin_enc - last_lin_enc;
-			double rotation = ang_enc - last_ang_enc;
-			last_lin_enc = lin_enc;
-			last_ang_enc = ang_enc;
-			x += cos(theta + rotation/2) * movement;
-			y += sin(theta + rotation/2) * movement;
-			theta += rotation;
-
-			nav_msgs::Odometry odom;
-			odom.header.stamp = time;
-			odom.header.frame_id = "odom";
-			odom.child_frame_id = "base_link";
-
-			odom.pose.pose.position.x = x;
-			odom.pose.pose.position.y = y;
-			odom.pose.pose.orientation.z = sin(theta/2);
-			odom.pose.pose.orientation.w = cos(theta/2);
-
-			odom.twist.twist.linear.x = lin_vel;
-			odom.twist.twist.angular.z = ang_vel;
-
-			pubOdom.publish(odom);
+			geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(th);
 
 			geometry_msgs::TransformStamped trans;
-			trans.header.stamp = odom.header.stamp;
-			trans.header.frame_id = odom.header.frame_id;
-			trans.child_frame_id = odom.child_frame_id;
+			trans.header.stamp = current_time;
+   			trans.header.frame_id = "/odom";
+    			trans.child_frame_id = "/base_link";
 
-			trans.transform.translation.x = odom.pose.pose.position.x;
-			trans.transform.translation.y = odom.pose.pose.position.y;
-			trans.transform.translation.z = odom.pose.pose.position.z;
-			trans.transform.rotation = odom.pose.pose.orientation;
+    			trans.transform.translation.x = x;
+    			trans.transform.translation.y = y;
+    			trans.transform.translation.z = 0.0;
+    			trans.transform.rotation = odom_quat;
 
+    			//send the transform
 			tf2_msgs::TFMessage tf2msg;
 			tf2msg.transforms.push_back(trans);
 			pubTf.publish(tf2msg);
+
+    			//next, we'll publish the odometry message over ROS
+    			nav_msgs::Odometry odom;
+    			odom.header.stamp = current_time;
+    			odom.header.frame_id = "/odom";
+
+    			//set the position
+    			odom.pose.pose.position.x = x;
+    			odom.pose.pose.position.y = y;
+    			odom.pose.pose.position.z = 0.0;
+    			odom.pose.pose.orientation = odom_quat;
+
+    			//set the velocity
+    			odom.child_frame_id = "/base_link";
+    			odom.twist.twist.linear.x = vx;
+    			odom.twist.twist.linear.y = 0;
+    			odom.twist.twist.angular.z = vth;
+
+    			//publish the message
+    			pubOdom.publish(odom);
+
+			lastTimeStamp = TimeStamp;
+
 		}
 	}
 
@@ -138,16 +160,17 @@ public:
 
 	void sub_vel(const geometry_msgs::Twist::ConstPtr& msg) {
 		double lin_vel = msg->linear.x;
-		double ang_vel = msg->angular.z;
+		double ang_vel = msg->angular.z;			
 
 		if (lin_vel > 0.5 || ang_vel > 0.5) {
 			ROS_WARN("velocity too large, lin:%f ang:%f", lin_vel, ang_vel);
-			return;
+			//return;
 		}
 
 		struct drive_command cmd = {DRIVE_COMMAND_MAGIC, 1,
-			lin_vel*65536, ang_vel*65536, 0, -1,
-			1.5*65536, 1.5*65536, 2.0*65536, 0.5*65536, -1};
+			lin_vel*65536, ang_vel*65536, 0,
+			-1, -1};
+
 		struct timespec now;
 		clock_gettime(CLOCK_MONOTONIC, &now);
 

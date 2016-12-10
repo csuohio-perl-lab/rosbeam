@@ -9,7 +9,7 @@ pygame.display.set_mode((400, 400))
 
 pygame.key.set_repeat(100, 100)
 
-pub = rospy.Publisher('/beam/cmd_vel', Twist, queue_size=2)
+pub = rospy.Publisher('/cmd_vel', Twist, queue_size=2)
 rospy.init_node('vel', anonymous=True)
 rate = rospy.Rate(10)
 while not rospy.is_shutdown():
@@ -19,13 +19,13 @@ while not rospy.is_shutdown():
 	ang_vel = 0
 
 	if pressed[pygame.K_w] or pressed[pygame.K_UP]:
-		lin_vel += 0.2
+		lin_vel += 0.5
 	if pressed[pygame.K_s] or pressed[pygame.K_DOWN]:
-		lin_vel -= 0.2
+		lin_vel -= 0.5
 	if pressed[pygame.K_d] or pressed[pygame.K_RIGHT]:
-		ang_vel -= 0.3
+		ang_vel -= 0.5
 	if pressed[pygame.K_a] or pressed[pygame.K_LEFT]:
-		ang_vel += 0.3
+		ang_vel += 0.5
 
 	print 'cmd', lin_vel, ang_vel
 	twist = Twist()

@@ -15,10 +15,6 @@ struct drive_command
 	int32_t ang_vel; // /65536.0
 	uint32_t type; // 0
 	uint64_t tag; // filled in
-	uint32_t lin_lim; // 1.5 /65536.0
-	uint32_t ang_lim; // 1.5 /65536.0
-	uint32_t lin_acc; // 2.0 /65536.0
-	uint32_t ang_acc; // 0.5 /65536.0
 	uint32_t crc; // filled in
 } __attribute__((packed));
 

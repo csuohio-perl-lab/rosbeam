@@ -103,10 +103,6 @@ static const void *inject_drive_command(const void *buf)
 			return buf;
 		cmd.lin_vel = 0;
 		cmd.ang_vel = 0;
-		cmd.lin_acc = 0;
-		cmd.ang_acc = 0;
-		cmd.lin_lim = 0;
-		cmd.ang_lim = 0;
 		reset_counter--;
 	}
 
