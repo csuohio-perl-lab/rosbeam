@@ -19,13 +19,13 @@ while not rospy.is_shutdown():
 	ang_vel = 0
 
 	if pressed[pygame.K_w] or pressed[pygame.K_UP]:
-		lin_vel += 0.5
+		lin_vel += 0.3
 	if pressed[pygame.K_s] or pressed[pygame.K_DOWN]:
-		lin_vel -= 0.5
+		lin_vel -= 0.3
 	if pressed[pygame.K_d] or pressed[pygame.K_RIGHT]:
-		ang_vel -= 0.5
+		ang_vel -= 0.3
 	if pressed[pygame.K_a] or pressed[pygame.K_LEFT]:
-		ang_vel += 0.5
+		ang_vel += 0.3
 
 	print 'cmd', lin_vel, ang_vel
 	twist = Twist()

@@ -103,6 +103,10 @@ static const void *inject_drive_command(const void *buf)
 			return buf;
 		cmd.lin_vel = 0;
 		cmd.ang_vel = 0;
+		//u cmd.lin_acc = 0;
+		//u cmd.ang_acc = 0;
+		//u cmd.lin_lim = 0;
+		//u cmd.ang_lim = 0;
 		reset_counter--;
 	}
 
@@ -202,7 +206,7 @@ WRAP(int, open, (const char *pathname, int flags, ...))
 
 static void setup()
 {
-	WRAPINIT_NAME(docrc, docrc_str)
+	WRAPINIT_NAME(docrc, docrc_str);
 
 	int fd = shm_open(DRIVE_SHM_NAME, O_RDWR | O_CREAT | O_TRUNC | O_NOCTTY, 0666);
 	if (fd < 0) {

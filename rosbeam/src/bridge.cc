@@ -1,4 +1,7 @@
 #include <ros/ros.h>
+#include <std_msgs/Float32.h>
+#include <std_msgs/Int16.h>
+#include <std_msgs/Int32.h> 
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/Twist.h>
 #include <tf2_msgs/TFMessage.h>
@@ -15,6 +18,7 @@
 
 #include "drive_command.h"
 
+//Distance between centers of two wheels: 10.27 inch == 0.261 meters 
 static int timespec_eq(const struct timespec *a, const struct timespec *b)
 {
 	return a->tv_sec == b->tv_sec && a->tv_nsec == b->tv_nsec;
@@ -26,6 +30,9 @@ private:
 	ros::Publisher pubOdom, pubTf;
 	ros::Subscriber subVel;
 	boost::thread odomThread;
+
+	//Debug
+	ros::Publisher pubEncoder1, pubEncoder2, pubRawEncoder1, pubRawEncoder2, pubAcc1, pubAcc2, pubAcc3, pubspeedr, pubspeedl, pubActualVel, pubYaw, pubActualAng;
 
 	struct drive_shm *shm;
 public:
@@ -49,11 +56,22 @@ public:
 		
 		subVel = node.subscribe("/cmd_vel", 2, &bridge_node::sub_vel, this);
 
-		pubOdom = node.advertise<nav_msgs::Odometry>("/odom", 50);
-		pubTf = node.advertise<tf2_msgs::TFMessage>("/tf", 50);
-
 		odomThread = boost::thread(&bridge_node::process_odometry, this);
-
+		
+		pubEncoder1 = node.advertise<std_msgs::Int16>("lwheel", 30);
+		pubEncoder2 = node.advertise<std_msgs::Int16>("rwheel", 30);
+		//Debug
+		pubRawEncoder1 = node.advertise<std_msgs::Int16>("lwheel_raw", 30);
+		pubRawEncoder2 = node.advertise<std_msgs::Int16>("rwheel_raw", 30);
+		pubAcc1 = node.advertise<std_msgs::Int32>("acc1", 30);
+		pubAcc2 = node.advertise<std_msgs::Int32>("acc2", 30);
+		pubAcc3 = node.advertise<std_msgs::Int32>("acc3", 30);
+		pubspeedr = node.advertise<std_msgs::Int32>("speedr", 30);
+		pubspeedl = node.advertise<std_msgs::Int32>("speedl", 30);
+		pubActualVel = node.advertise<std_msgs::Int32>("actuallinvel", 30);	
+		pubActualAng = node.advertise<std_msgs::Int32>("actualangvel", 30);	
+		pubYaw = node.advertise<std_msgs::Int32>("yaw", 30);	
+	
 		return true;
 	}
 
@@ -61,17 +79,18 @@ public:
 		bool first_time = true;
 		struct timespec stat_time;
 		struct drive_status stat;
+		int last_lwheel, last_rwheel, diff_l, diff_r;
+		int  new_lwheel, new_rwheel = 0;
+		int est; //encoder speed thresold
+		int yaw_deg;
+		ros::Time current_time, last_time;
+		current_time = ros::Time::now();
+		last_time = ros::Time::now();
 
-		double x = 0.0;
-		double y = 0.0;
-  		double th = 0.0;
-  		double vx;
-  		double vy = 0.0;
-  		double vth;
-		
-		double lastTimeStamp, TimeStamp;
 		bool firstTimeStamp = true; 
-
+		node.param("/encoder_speed_threshold", est, 60);
+		
+		ros::Rate r(30);
 		while (ros::ok()) {
 			pthread_mutex_lock(&shm->stat_lock);
 			if (first_time) {
@@ -85,72 +104,45 @@ public:
 			stat = shm->stat;
 			pthread_mutex_unlock(&shm->stat_lock);
 
-			ros::Time current_time = ros::Time::now();
+			current_time = ros::Time::now();
 
-			TimeStamp = stat.timeStamp;			
+			//TimeStamp = stat.timeStamp;			
 			if(firstTimeStamp){
 				firstTimeStamp = false;
-				lastTimeStamp = TimeStamp;
+				last_time = current_time;
+				last_lwheel = stat.encoder_1;
+				last_rwheel = stat.encoder_2;
+				new_lwheel = stat.encoder_1;
+				new_rwheel = stat.encoder_2;
 				continue;			
 			}	
+
+			diff_l = stat.encoder_1 - last_lwheel;
+			diff_r = stat.encoder_2 - last_rwheel;
+
+			if (! ( (stat.speed_1 < -est) || (stat.speed_1 > est) || (stat.speed_2 < -est) || (stat.speed_2 > est) ) ){
+				new_lwheel += diff_l;
+				new_rwheel += diff_r;
+		        }
 	
-			if((stat.actualLinearVelocity < 150 && stat.actualLinearVelocity > -150) || (stat.actualAngularVelocity < 150 && stat.actualAngularVelocity > -150))
-			{
-				stat.actualLinearVelocity = 0;
-				stat.actualAngularVelocity = 0;
-			} 		
+            		pubEncoder1.publish(new_lwheel);
+            		pubEncoder2.publish(-new_rwheel);
+			
+			last_lwheel = stat.encoder_1;
+			last_rwheel = stat.encoder_2;
 
-			vx = stat.actualLinearVelocity / 65536.0;
-			vth = stat.actualAngularVelocity / 65536.0;		
- 
-			double dt = (TimeStamp - lastTimeStamp)/ 1000000;
-			double delta_x = (vx * cos(th) - vy * sin(th)) * dt;
-    			double delta_y = (vx * sin(th) + vy * cos(th)) * dt;
-    			double delta_th = vth * dt;
-		
-			x += delta_x;
-    			y += delta_y;
-    			th += delta_th;
-
-			geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(th);
-
-			geometry_msgs::TransformStamped trans;
-			trans.header.stamp = current_time;
-   			trans.header.frame_id = "/odom";
-    			trans.child_frame_id = "/base_link";
-
-    			trans.transform.translation.x = x;
-    			trans.transform.translation.y = y;
-    			trans.transform.translation.z = 0.0;
-    			trans.transform.rotation = odom_quat;
-
-    			//send the transform
-			tf2_msgs::TFMessage tf2msg;
-			tf2msg.transforms.push_back(trans);
-			pubTf.publish(tf2msg);
-
-    			//next, we'll publish the odometry message over ROS
-    			nav_msgs::Odometry odom;
-    			odom.header.stamp = current_time;
-    			odom.header.frame_id = "/odom";
-
-    			//set the position
-    			odom.pose.pose.position.x = x;
-    			odom.pose.pose.position.y = y;
-    			odom.pose.pose.position.z = 0.0;
-    			odom.pose.pose.orientation = odom_quat;
-
-    			//set the velocity
-    			odom.child_frame_id = "/base_link";
-    			odom.twist.twist.linear.x = vx;
-    			odom.twist.twist.linear.y = 0;
-    			odom.twist.twist.angular.z = vth;
-
-    			//publish the message
-    			pubOdom.publish(odom);
-
-			lastTimeStamp = TimeStamp;
-
+			//Debug
+			yaw_deg = stat.integratedYaw / 65536;
+			pubRawEncoder1.publish(stat.encoder_1);
+			pubRawEncoder2.publish(-stat.encoder_2);
+			pubAcc1.publish(stat.accel_1);
+			pubAcc2.publish(stat.accel_2);
+			pubAcc3.publish(stat.accel_3);
+			pubspeedl.publish(stat.speed_1);
+			pubspeedr.publish(stat.speed_2);
+			pubActualVel.publish(stat.actualLinearVelocity);
+			pubActualAng.publish(stat.actualAngularVelocity);
+			pubYaw.publish(yaw_deg);
 		}
 	}
 
